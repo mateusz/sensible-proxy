@@ -3,8 +3,8 @@ package main
 import (
 	"bufio"
 	"container/list"
-	"fmt"
 	"io"
+	"log"
 	"net"
 	"strconv"
 	"strings"
@@ -22,8 +22,8 @@ func handleHTTPConnection(downstream net.Conn) {
 	for hostname == "" {
 		bytes, _, error := reader.ReadLine()
 		if error != nil {
-			fmt.Println("Error reading", error)
 			downstream.Close()
+			log.Println("Error reading from connection:", error)
 			return
 		}
 		line := string(bytes)
@@ -40,8 +40,8 @@ func handleHTTPConnection(downstream net.Conn) {
 
 	upstream, error := net.Dial("tcp", "www."+hostname+":80")
 	if error != nil {
-		fmt.Println("Couldn't connect to backend", error)
 		downstream.Close()
+		log.Println("Couldn't connect to backend:", error)
 		return
 	}
 
@@ -59,28 +59,34 @@ func handleHTTPSConnection(downstream net.Conn) {
 	firstByte := make([]byte, 1)
 	_, error := downstream.Read(firstByte)
 	if error != nil {
-		fmt.Println("Couldn't read first byte :-(")
+		downstream.Close()
+		log.Println("TLS header parsing problem - couldn't read first byte.")
 		return
 	}
 	if firstByte[0] != 0x16 {
-		fmt.Println("Not TLS :-(")
+		downstream.Close()
+		log.Println("TLS header parsing problem - not TLS.")
+		return
 	}
 
 	versionBytes := make([]byte, 2)
 	_, error = downstream.Read(versionBytes)
 	if error != nil {
-		fmt.Println("Couldn't read version bytes :-(")
+		downstream.Close()
+		log.Println("TLS header parsing problem - couldn't read version bytes.")
 		return
 	}
 	if versionBytes[0] < 3 || (versionBytes[0] == 3 && versionBytes[1] < 1) {
-		fmt.Println("SSL < 3.1 so it's still not TLS")
+		downstream.Close()
+		log.Println("TLS header parsing problem - SSL < 3.1, SNI not supported.")
 		return
 	}
 
 	restLengthBytes := make([]byte, 2)
 	_, error = downstream.Read(restLengthBytes)
 	if error != nil {
-		fmt.Println("Couldn't read restLength bytes :-(")
+		downstream.Close()
+		log.Println("TLS header parsing problem - couldn't read restLength bytes:", error)
 		return
 	}
 	restLength := (int(restLengthBytes[0]) << 8) + int(restLengthBytes[1])
@@ -88,7 +94,8 @@ func handleHTTPSConnection(downstream net.Conn) {
 	rest := make([]byte, restLength)
 	_, error = downstream.Read(rest)
 	if error != nil {
-		fmt.Println("Couldn't read rest of bytes")
+		downstream.Close()
+		log.Println("TLS header parsing problem - couldn't read rest of bytes:", error)
 		return
 	}
 
@@ -97,7 +104,8 @@ func handleHTTPSConnection(downstream net.Conn) {
 	handshakeType := rest[0]
 	current += 1
 	if handshakeType != 0x1 {
-		fmt.Println("Not a ClientHello")
+		downstream.Close()
+		log.Println("TLS header parsing problem - not a ClientHello.")
 		return
 	}
 
@@ -121,7 +129,8 @@ func handleHTTPSConnection(downstream net.Conn) {
 	current += compressionMethodLength
 
 	if current > restLength {
-		fmt.Println("no extensions")
+		downstream.Close()
+		log.Println("TLS header parsing problem - no extensions.")
 		return
 	}
 
@@ -145,7 +154,7 @@ func handleHTTPSConnection(downstream net.Conn) {
 			nameType := rest[current]
 			current += 1
 			if nameType != 0 {
-				fmt.Println("Not a hostname")
+				log.Println("TLS header parsing problem - not a hostname.")
 				return
 			}
 			nameLen := (int(rest[current]) << 8) + int(rest[current+1])
@@ -156,12 +165,13 @@ func handleHTTPSConnection(downstream net.Conn) {
 		current += extensionDataLength
 	}
 	if hostname == "" {
-		fmt.Println("No hostname")
+		log.Println("TLS header parsing problem - no hostname found.")
 		return
 	}
 
 	upstream, error := net.Dial("tcp", "www."+hostname+":443")
 	if error != nil {
+		log.Println("Couldn't connect to backend:", error)
 		downstream.Close()
 		return
 	}
@@ -184,14 +194,14 @@ func doProxy(done chan int, port int, handle func(net.Conn)) {
 
 	listener, error := net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(port))
 	if error != nil {
-		fmt.Println("Couldn't start listening", error)
+		log.Println("Couldn't start listening:", error)
 		return
 	}
-	fmt.Println("Started proxy on", port, "-- listening...")
+	log.Println("Started proxy on", port, "-- listening...")
 	for {
 		connection, error := listener.Accept()
 		if error != nil {
-			fmt.Println("Accept error", error)
+			log.Println("Accept error:", error)
 			return
 		}
 
