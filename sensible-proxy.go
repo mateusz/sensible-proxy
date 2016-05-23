@@ -1,14 +1,60 @@
 package main
 
+// sensible-proxy
+//
+// By default sensible-proxy will listen on port 80 and 443, this can be changed
+// by setting the ENV variables PORT and SSLPORT to other values, e.g:
+//     $ HTTP_PORT=8080 HTTPS_PORT=8443 sensible-proxy
+
 import (
 	"bufio"
 	"container/list"
 	"io"
 	"log"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 )
+
+func main() {
+	// default configuration
+	var (
+		httpPort  int = 80
+		httpsPort int = 443
+	)
+
+	// Remove the default prefixing for log output, rely on process
+	// supervisor to prefix the timestamp and process name
+	log.SetFlags(0)
+
+	// Get configuration from ENV
+	var err error
+	if envVarSet("HTTP_PORT") {
+		httpPort, err = intFromEnvVar("HTTP_PORT")
+		if err != nil {
+			log.Printf("Could not convert ENV variable HTTP_PORT to an integer")
+		}
+	}
+	if envVarSet("HTTPS_PORT") {
+		httpsPort, err = intFromEnvVar("HTTPS_PORT")
+		if err != nil {
+			log.Printf("Could not convert ENV variable HTTPS_PORT to an integer")
+		}
+	}
+	if err != nil {
+		os.Exit(1)
+	}
+
+	httpDone := make(chan int)
+	go doProxy(httpDone, httpPort, handleHTTPConnection)
+
+	httpsDone := make(chan int)
+	go doProxy(httpsDone, httpsPort, handleHTTPSConnection)
+
+	<-httpDone
+	<-httpsDone
+}
 
 func copyAndClose(dst io.WriteCloser, src io.Reader) {
 	io.Copy(dst, src)
@@ -209,13 +255,14 @@ func doProxy(done chan int, port int, handle func(net.Conn)) {
 	}
 }
 
-func main() {
-	httpDone := make(chan int)
-	go doProxy(httpDone, 80, handleHTTPConnection)
+func envVarSet(name string) bool {
+	if os.Getenv(name) != "" {
+		return true
+	}
+	return false
+}
 
-	httpsDone := make(chan int)
-	go doProxy(httpsDone, 443, handleHTTPSConnection)
-
-	<-httpDone
-	<-httpsDone
+func intFromEnvVar(name string) (int, error) {
+	envVar := os.Getenv(name)
+	return strconv.Atoi(envVar)
 }
