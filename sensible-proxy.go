@@ -13,8 +13,10 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 func main() {
@@ -46,14 +48,25 @@ func main() {
 		os.Exit(1)
 	}
 
-	httpDone := make(chan int)
-	go doProxy(httpDone, httpPort, handleHTTPConnection)
+	errChan := make(chan int)
+	go doProxy(errChan, httpPort, handleHTTPConnection)
+	go doProxy(errChan, httpsPort, handleHTTPSConnection)
 
-	httpsDone := make(chan int)
-	go doProxy(httpsDone, httpsPort, handleHTTPSConnection)
+	// setup capturing of signals
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan,
+		syscall.SIGHUP,
+		syscall.SIGINT,
+		syscall.SIGTERM,
+		syscall.SIGQUIT)
 
-	<-httpDone
-	<-httpsDone
+	// block until error or signal
+	select {
+	case <-errChan:
+		os.Exit(1)
+	case <-sigChan:
+		os.Exit(0)
+	}
 }
 
 func copyAndClose(dst io.WriteCloser, src io.Reader) {
@@ -233,26 +246,27 @@ func handleHTTPSConnection(downstream net.Conn) {
 	go copyAndClose(downstream, upstream)
 }
 
-func reportDone(done chan int) {
-	done <- 1
+func reportError(errChan chan int) {
+	errChan <- 1
 }
 
-func doProxy(done chan int, port int, handle func(net.Conn)) {
-	defer reportDone(done)
+func doProxy(errChan chan int, port int, handle func(net.Conn)) {
+	defer reportError(errChan)
 
-	listener, error := net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(port))
-	if error != nil {
-		log.Println("Couldn't start listening:", error)
+	listener, err := net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(port))
+	if err != nil {
+		log.Println("Couldn't start listening:", err)
 		return
 	}
+	defer listener.Close()
+
 	log.Println("Started proxy on", port, "-- listening...")
 	for {
 		connection, error := listener.Accept()
 		if error != nil {
 			log.Println("Accept error:", error)
-			return
+			continue
 		}
-
 		go handle(connection)
 	}
 }
