@@ -14,39 +14,36 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 )
 
+var appLog *log.Logger
+
 func main() {
 	// default configuration
 	var (
-		httpPort  int = 80
-		httpsPort int = 443
+		httpPort   string = "80"
+		httpsPort  string = "443"
+		appLogPath string = "/var/log/sensible-proxy.log"
 	)
 
-	// Remove the default prefixing for log output, rely on process
-	// supervisor to prefix the timestamp and process name
-	log.SetFlags(0)
-
 	// Get configuration from ENV
-	var err error
 	if envVarSet("HTTP_PORT") {
-		httpPort, err = intFromEnvVar("HTTP_PORT")
-		if err != nil {
-			log.Printf("Could not convert ENV variable HTTP_PORT to an integer")
-		}
+		httpPort = os.Getenv("HTTP_PORT")
 	}
 	if envVarSet("HTTPS_PORT") {
-		httpsPort, err = intFromEnvVar("HTTPS_PORT")
-		if err != nil {
-			log.Printf("Could not convert ENV variable HTTPS_PORT to an integer")
-		}
+		httpsPort = os.Getenv("HTTPS_PORT")
 	}
+	if envVarSet("LOG_PATH") {
+		appLogPath = os.Getenv("LOG_PATH")
+	}
+
+	logFile, err := os.OpenFile(appLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
-		os.Exit(1)
+		log.Fatalln("Failed to open log file", err)
 	}
+	appLog = log.New(io.Writer(logFile), "", log.Ldate|log.Ltime)
 
 	errChan := make(chan int)
 	go doProxy(errChan, httpPort, handleHTTPConnection)
@@ -82,7 +79,7 @@ func handleHTTPConnection(downstream net.Conn) {
 		bytes, _, error := reader.ReadLine()
 		if error != nil {
 			downstream.Close()
-			log.Println("Error reading from connection:", error)
+			appLog.Println("Error reading from connection:", error)
 			return
 		}
 		line := string(bytes)
@@ -96,11 +93,15 @@ func handleHTTPConnection(downstream net.Conn) {
 			break
 		}
 	}
+
+	// log the access
+	appLog.Println(downstream.RemoteAddr().String(), hostname)
+
 	// will timeout with the default linux TCP timeout
 	upstream, err := net.Dial("tcp", "www."+hostname+":80")
 	if err != nil {
 		downstream.Close()
-		log.Println("Couldn't connect to backend:", err)
+		appLog.Println("Couldn't connect to backend:", err)
 		return
 	}
 
@@ -120,12 +121,12 @@ func handleHTTPSConnection(downstream net.Conn) {
 	_, error := downstream.Read(firstByte)
 	if error != nil {
 		downstream.Close()
-		log.Println("TLS header parsing problem - couldn't read first byte.")
+		appLog.Println("TLS header parsing problem - couldn't read first byte.")
 		return
 	}
 	if firstByte[0] != 0x16 {
 		downstream.Close()
-		log.Println("TLS header parsing problem - not TLS.")
+		appLog.Println("TLS header parsing problem - not TLS.")
 		return
 	}
 
@@ -133,12 +134,12 @@ func handleHTTPSConnection(downstream net.Conn) {
 	_, error = downstream.Read(versionBytes)
 	if error != nil {
 		downstream.Close()
-		log.Println("TLS header parsing problem - couldn't read version bytes.")
+		appLog.Println("TLS header parsing problem - couldn't read version bytes.")
 		return
 	}
 	if versionBytes[0] < 3 || (versionBytes[0] == 3 && versionBytes[1] < 1) {
 		downstream.Close()
-		log.Println("TLS header parsing problem - SSL < 3.1, SNI not supported.")
+		appLog.Println("TLS header parsing problem - SSL < 3.1, SNI not supported.")
 		return
 	}
 
@@ -146,7 +147,7 @@ func handleHTTPSConnection(downstream net.Conn) {
 	_, error = downstream.Read(restLengthBytes)
 	if error != nil {
 		downstream.Close()
-		log.Println("TLS header parsing problem - couldn't read restLength bytes:", error)
+		appLog.Println("TLS header parsing problem - couldn't read restLength bytes:", error)
 		return
 	}
 	restLength := (int(restLengthBytes[0]) << 8) + int(restLengthBytes[1])
@@ -155,7 +156,7 @@ func handleHTTPSConnection(downstream net.Conn) {
 	_, error = downstream.Read(rest)
 	if error != nil {
 		downstream.Close()
-		log.Println("TLS header parsing problem - couldn't read rest of bytes:", error)
+		appLog.Println("TLS header parsing problem - couldn't read rest of bytes:", error)
 		return
 	}
 
@@ -165,7 +166,7 @@ func handleHTTPSConnection(downstream net.Conn) {
 	current += 1
 	if handshakeType != 0x1 {
 		downstream.Close()
-		log.Println("TLS header parsing problem - not a ClientHello.")
+		appLog.Println("TLS header parsing problem - not a ClientHello.")
 		return
 	}
 
@@ -190,7 +191,7 @@ func handleHTTPSConnection(downstream net.Conn) {
 
 	if current > restLength {
 		downstream.Close()
-		log.Println("TLS header parsing problem - no extensions.")
+		appLog.Println("TLS header parsing problem - no extensions.")
 		return
 	}
 
@@ -214,7 +215,7 @@ func handleHTTPSConnection(downstream net.Conn) {
 			nameType := rest[current]
 			current += 1
 			if nameType != 0 {
-				log.Println("TLS header parsing problem - not a hostname.")
+				appLog.Println("TLS header parsing problem - not a hostname.")
 				return
 			}
 			nameLen := (int(rest[current]) << 8) + int(rest[current+1])
@@ -225,14 +226,17 @@ func handleHTTPSConnection(downstream net.Conn) {
 		current += extensionDataLength
 	}
 	if hostname == "" {
-		log.Println("TLS header parsing problem - no hostname found.")
+		appLog.Println("TLS header parsing problem - no hostname found.")
 		return
 	}
+
+	// log the access
+	appLog.Println(downstream.RemoteAddr().String(), hostname)
 
 	// proxy the clients request to the upstream
 	upstream, error := net.Dial("tcp", "www."+hostname+":443")
 	if error != nil {
-		log.Println("Couldn't connect to backend:", error)
+		appLog.Println("Couldn't connect to backend:", error)
 		downstream.Close()
 		return
 	}
@@ -250,21 +254,21 @@ func reportError(errChan chan int) {
 	errChan <- 1
 }
 
-func doProxy(errChan chan int, port int, handle func(net.Conn)) {
+func doProxy(errChan chan int, port string, handle func(net.Conn)) {
 	defer reportError(errChan)
 
-	listener, err := net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(port))
+	listener, err := net.Listen("tcp", "0.0.0.0:"+port)
 	if err != nil {
-		log.Println("Couldn't start listening:", err)
+		appLog.Println("Couldn't start listening:", err)
 		return
 	}
 	defer listener.Close()
 
-	log.Println("Started proxy on", port, "-- listening...")
+	appLog.Println("Started proxy on", port, "-- listening...")
 	for {
 		connection, error := listener.Accept()
 		if error != nil {
-			log.Println("Accept error:", error)
+			appLog.Println("Accept error:", error)
 			continue
 		}
 		go handle(connection)
@@ -276,9 +280,4 @@ func envVarSet(name string) bool {
 		return true
 	}
 	return false
-}
-
-func intFromEnvVar(name string) (int, error) {
-	envVar := os.Getenv(name)
-	return strconv.Atoi(envVar)
 }

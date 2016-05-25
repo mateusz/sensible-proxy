@@ -4,12 +4,24 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net"
 	"strings"
 	"testing"
 )
 
+type FakeWriter struct {
+	logs []byte
+}
+
+func (w *FakeWriter) Write(p []byte) (n int, err error) {
+	w.logs = append(w.logs, p...)
+	return len(p), nil
+}
+
 func TestHTTPConnection(t *testing.T) {
+	w := &FakeWriter{}
+	appLog = log.New(w, "", log.Ldate|log.Ltime)
 	done := make(chan bool)
 	listener, err := getProxyServer(done, handleHTTPConnection)
 	conn, err := net.Dial("tcp", listener.Addr().String())
@@ -28,11 +40,22 @@ func TestHTTPConnection(t *testing.T) {
 		t.Errorf("Expected response to contain '%s' got:\n%s", expected, actual)
 	}
 
+	expected = "google.com"
+	if !strings.Contains(string(w.logs), expected) {
+		t.Errorf("Expected log to contain '%s' got:\n%s", expected, w.logs)
+	}
+	expected = conn.LocalAddr().String()
+	if !strings.Contains(string(w.logs), expected) {
+		t.Errorf("Expected log to contain '%s' got:\n%s", expected, w.logs)
+	}
+
 	defer conn.Close()
 	done <- true
 }
 
 func TestHTTPSConnection(t *testing.T) {
+	w := &FakeWriter{}
+	appLog = log.New(w, "", log.Ldate|log.Ltime)
 	done := make(chan bool)
 	listener, err := getProxyServer(done, handleHTTPSConnection)
 	if err != nil {
@@ -56,6 +79,15 @@ func TestHTTPSConnection(t *testing.T) {
 
 	if !strings.Contains(string(actual), expected) {
 		t.Errorf("Expected response to contain '%s' got:\n%s", expected, actual)
+	}
+
+	expected = "google.com"
+	if !strings.Contains(string(w.logs), expected) {
+		t.Errorf("Expected log to contain '%s' got:\n%s", expected, w.logs)
+	}
+	expected = conn.LocalAddr().String()
+	if !strings.Contains(string(w.logs), expected) {
+		t.Errorf("Expected log to contain '%s' got:\n%s", expected, w.logs)
 	}
 
 	defer conn.Close()
