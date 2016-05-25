@@ -67,8 +67,11 @@ func main() {
 }
 
 func copyAndClose(dst io.WriteCloser, src io.Reader) {
-	io.Copy(dst, src)
-	dst.Close()
+	_, err := io.Copy(dst, src)
+	if err != nil {
+		appLog.Println("Error during copy between connections: :", err)
+	}
+	close(dst)
 }
 
 func handleHTTPConnection(downstream net.Conn) {
@@ -78,7 +81,7 @@ func handleHTTPConnection(downstream net.Conn) {
 	for hostname == "" {
 		bytes, _, error := reader.ReadLine()
 		if error != nil {
-			downstream.Close()
+			close(downstream)
 			appLog.Println("Error reading from connection:", error)
 			return
 		}
@@ -100,7 +103,7 @@ func handleHTTPConnection(downstream net.Conn) {
 	// will timeout with the default linux TCP timeout
 	upstream, err := net.Dial("tcp", "www."+hostname+":80")
 	if err != nil {
-		downstream.Close()
+		close(downstream)
 		appLog.Println("Couldn't connect to backend:", err)
 		return
 	}
@@ -108,24 +111,37 @@ func handleHTTPConnection(downstream net.Conn) {
 	// proxy the clients request to the upstream
 	for element := readLines.Front(); element != nil; element = element.Next() {
 		line := element.Value.(string)
-		upstream.Write([]byte(line))
-		upstream.Write([]byte("\n"))
+		_, err := upstream.Write([]byte(line))
+		if err != nil {
+			appLog.Println("Error while proxying initial request to backend: %s", err)
+		}
+		_, err = upstream.Write([]byte("\n"))
+		if err != nil {
+			appLog.Println("Error while proxying initial request to backend: %s", err)
+		}
 	}
 
 	go copyAndClose(upstream, reader)
 	go copyAndClose(downstream, upstream)
 }
 
+func close(c io.Closer) {
+	err := c.Close()
+	if err != nil {
+		appLog.Println("Error when closing connection: %s", err)
+	}
+}
+
 func handleHTTPSConnection(downstream net.Conn) {
 	firstByte := make([]byte, 1)
 	_, err := downstream.Read(firstByte)
 	if err != nil {
-		downstream.Close()
+		close(downstream)
 		appLog.Println("TLS header parsing problem - couldn't read first byte.")
 		return
 	}
 	if firstByte[0] != 0x16 {
-		downstream.Close()
+		close(downstream)
 		appLog.Println("TLS header parsing problem - not TLS.")
 		return
 	}
@@ -133,12 +149,12 @@ func handleHTTPSConnection(downstream net.Conn) {
 	versionBytes := make([]byte, 2)
 	_, err = downstream.Read(versionBytes)
 	if err != nil {
-		downstream.Close()
+		close(downstream)
 		appLog.Println("TLS header parsing problem - couldn't read version bytes.")
 		return
 	}
 	if versionBytes[0] < 3 || (versionBytes[0] == 3 && versionBytes[1] < 1) {
-		downstream.Close()
+		close(downstream)
 		appLog.Println("TLS header parsing problem - SSL < 3.1, SNI not supported.")
 		return
 	}
@@ -146,7 +162,7 @@ func handleHTTPSConnection(downstream net.Conn) {
 	restLengthBytes := make([]byte, 2)
 	_, err = downstream.Read(restLengthBytes)
 	if err != nil {
-		downstream.Close()
+		close(downstream)
 		appLog.Println("TLS header parsing problem - couldn't read restLength bytes:", err)
 		return
 	}
@@ -155,7 +171,7 @@ func handleHTTPSConnection(downstream net.Conn) {
 	rest := make([]byte, restLength)
 	n, err := downstream.Read(rest)
 	if err != nil || n == 0 {
-		downstream.Close()
+		close(downstream)
 		appLog.Println("TLS header parsing problem - couldn't read rest of bytes:", err)
 		return
 	}
@@ -165,7 +181,7 @@ func handleHTTPSConnection(downstream net.Conn) {
 	handshakeType := rest[0]
 	current += 1
 	if handshakeType != 0x1 {
-		downstream.Close()
+		close(downstream)
 		appLog.Println("TLS header parsing problem - not a ClientHello.")
 		return
 	}
@@ -190,7 +206,7 @@ func handleHTTPSConnection(downstream net.Conn) {
 	current += compressionMethodLength
 
 	if current > restLength {
-		downstream.Close()
+		close(downstream)
 		appLog.Println("TLS header parsing problem - no extensions.")
 		return
 	}
@@ -237,14 +253,26 @@ func handleHTTPSConnection(downstream net.Conn) {
 	upstream, err := net.Dial("tcp", "www."+hostname+":443")
 	if err != nil {
 		appLog.Println("Couldn't connect to backend:", err)
-		downstream.Close()
+		close(downstream)
 		return
 	}
 
-	upstream.Write(firstByte)
-	upstream.Write(versionBytes)
-	upstream.Write(restLengthBytes)
-	upstream.Write(rest)
+	_, err = upstream.Write(firstByte)
+	if err != nil {
+		appLog.Println("Error while proxying first byte to backend: %s", err)
+	}
+	_, err = upstream.Write(versionBytes)
+	if err != nil {
+		appLog.Println("Error while proxying versionBytes to backend: %s", err)
+	}
+	_, err = upstream.Write(restLengthBytes)
+	if err != nil {
+		appLog.Println("Error while proxying restLengthBytes to backend: %s", err)
+	}
+	_, err = upstream.Write(rest)
+	if err != nil {
+		appLog.Println("Error while proxying rest to backend: %s", err)
+	}
 
 	go copyAndClose(upstream, downstream)
 	go copyAndClose(downstream, upstream)
@@ -262,7 +290,7 @@ func doProxy(errChan chan int, port string, handle func(net.Conn)) {
 		appLog.Println("Couldn't start listening:", err)
 		return
 	}
-	defer listener.Close()
+	defer close(listener)
 
 	appLog.Println("Started proxy on", port, "-- listening...")
 	for {
