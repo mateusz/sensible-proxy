@@ -153,8 +153,8 @@ func handleHTTPSConnection(downstream net.Conn) {
 	restLength := (int(restLengthBytes[0]) << 8) + int(restLengthBytes[1])
 
 	rest := make([]byte, restLength)
-	_, err = downstream.Read(rest)
-	if err != nil {
+	n, err := downstream.Read(rest)
+	if err != nil || n == 0 {
 		downstream.Close()
 		appLog.Println("TLS header parsing problem - couldn't read rest of bytes:", err)
 		return

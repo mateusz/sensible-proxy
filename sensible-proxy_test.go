@@ -44,14 +44,22 @@ func TestHTTPConnection(t *testing.T) {
 }
 
 func TestHTTPConnectToNoneExistingDNS(t *testing.T) {
+	w := &FakeWriter{}
+	appLog = log.New(w, "", log.Ldate|log.Ltime)
 	content, conn, _ := requestHTTP("t.ls")
 	defer conn.Close()
 	if string(content) != "" {
 		t.Errorf("Expected read to be empty")
 	}
+	expected := "Couldn't connect to backend"
+	if !strings.Contains(string(w.logs), expected) {
+		t.Errorf("Expected '%s' in logs, got %s", expected, string(w.logs))
+	}
 }
 
 func TestHTTPSConnection(t *testing.T) {
+	w := &FakeWriter{}
+	appLog = log.New(w, "", log.Ldate|log.Ltime)
 	actual, conn, err := requestHTTPS("google.com", "google.com")
 	defer conn.Close()
 	if err != nil {
@@ -62,12 +70,34 @@ func TestHTTPSConnection(t *testing.T) {
 	if !strings.Contains(string(actual), expected) {
 		t.Errorf("Expected response to contain '%s' got:\n%s", expected, actual)
 	}
+
+	expected = "google.com"
+	if !strings.Contains(string(w.logs), expected) {
+		t.Errorf("Expected log to contain '%s' got:\n%s", expected, w.logs)
+	}
+	expected = conn.LocalAddr().String()
+	if !strings.Contains(string(w.logs), expected) {
+		t.Errorf("Expected log to contain '%s' got:\n%s", expected, w.logs)
+	}
 }
 
 func TestHTTPSConnectionEmptySNI(t *testing.T) {
-	_, _, err := requestHTTPS("", "google.com")
+	w := &FakeWriter{}
+	appLog = log.New(w, "", log.Ldate|log.Ltime)
+	_, conn, err := requestHTTPS("", "google.com")
+
+	if conn != nil {
+		t.Errorf("Expected connection to be nil")
+		conn.Close()
+	}
+
 	if err != io.EOF {
 		t.Errorf("Expected connection to be closed with an EOF")
+	}
+
+	expected := "Couldn't connect to backend"
+	if !strings.Contains(string(w.logs), expected) {
+		t.Errorf("Expected '%s' in logs, got %s", expected, string(w.logs))
 	}
 }
 
@@ -75,10 +105,12 @@ func TestHTTPSConnectionWrongSNI(t *testing.T) {
 	w := &FakeWriter{}
 	appLog = log.New(w, "", log.Ldate|log.Ltime)
 	actual, conn, err := requestHTTPS("example.com", "google.com")
+	defer conn.Close()
 	if err != nil {
 		t.Errorf("%s", err)
 		return
 	}
+
 	expected := "HTTP/1.0 404 Not Found"
 	if !strings.Contains(string(actual), expected) {
 		t.Errorf("Expected response to contain '%s' got:\n%s", expected, actual)
@@ -130,7 +162,6 @@ func requestHTTPS(SNIServerName, requestServerName string) ([]byte, net.Conn, er
 	if err != nil {
 		return nil, nil, err
 	}
-	defer conn.Close()
 	fmt.Fprintf(conn, "GET / HTTP/1.0\r\nHost: "+requestServerName+"\r\nContent-Length: 0\r\n\r\n")
 	content, err := ioutil.ReadAll(conn)
 	return content, conn, err
@@ -151,4 +182,35 @@ func getProxyServer(done chan bool, handler func(net.Conn)) (net.Listener, error
 	}(done, handler)
 
 	return listener, nil
+}
+
+func TestHTTPSBadInput(t *testing.T) {
+	w := &FakeWriter{}
+	appLog = log.New(w, "", log.Ldate|log.Ltime)
+
+	var crashers = []string{
+		"\x1600\x00",
+	}
+
+	for _, crashData := range crashers {
+		b := &buffer{}
+		b.data = []byte(crashData)
+		handleHTTPSConnection(b)
+	}
+}
+
+// buffer is just here to make it easier to inject random content into a
+// connection.
+type buffer struct {
+	net.TCPConn
+	data []byte
+}
+
+func (b *buffer) Read(p []byte) (n int, err error) {
+	copy(p, b.data)
+	return len(b.data), nil
+}
+
+func (b *buffer) Close() error {
+	return nil
 }
