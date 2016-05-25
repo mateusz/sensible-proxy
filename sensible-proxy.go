@@ -83,14 +83,15 @@ func handleHTTPConnection(downstream net.Conn) {
 			break
 		}
 	}
-
-	upstream, error := net.Dial("tcp", "www."+hostname+":80")
-	if error != nil {
+	// will timeout with the default linux TCP timeout
+	upstream, err := net.Dial("tcp", "www."+hostname+":80")
+	if err != nil {
 		downstream.Close()
-		log.Println("Couldn't connect to backend:", error)
+		log.Println("Couldn't connect to backend:", err)
 		return
 	}
 
+	// proxy the clients request to the upstream
 	for element := readLines.Front(); element != nil; element = element.Next() {
 		line := element.Value.(string)
 		upstream.Write([]byte(line))
@@ -215,6 +216,7 @@ func handleHTTPSConnection(downstream net.Conn) {
 		return
 	}
 
+	// proxy the clients request to the upstream
 	upstream, error := net.Dial("tcp", "www."+hostname+":443")
 	if error != nil {
 		log.Println("Couldn't connect to backend:", error)
