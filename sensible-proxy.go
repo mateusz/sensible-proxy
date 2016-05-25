@@ -118,8 +118,8 @@ func handleHTTPConnection(downstream net.Conn) {
 
 func handleHTTPSConnection(downstream net.Conn) {
 	firstByte := make([]byte, 1)
-	_, error := downstream.Read(firstByte)
-	if error != nil {
+	_, err := downstream.Read(firstByte)
+	if err != nil {
 		downstream.Close()
 		appLog.Println("TLS header parsing problem - couldn't read first byte.")
 		return
@@ -131,8 +131,8 @@ func handleHTTPSConnection(downstream net.Conn) {
 	}
 
 	versionBytes := make([]byte, 2)
-	_, error = downstream.Read(versionBytes)
-	if error != nil {
+	_, err = downstream.Read(versionBytes)
+	if err != nil {
 		downstream.Close()
 		appLog.Println("TLS header parsing problem - couldn't read version bytes.")
 		return
@@ -144,19 +144,19 @@ func handleHTTPSConnection(downstream net.Conn) {
 	}
 
 	restLengthBytes := make([]byte, 2)
-	_, error = downstream.Read(restLengthBytes)
-	if error != nil {
+	_, err = downstream.Read(restLengthBytes)
+	if err != nil {
 		downstream.Close()
-		appLog.Println("TLS header parsing problem - couldn't read restLength bytes:", error)
+		appLog.Println("TLS header parsing problem - couldn't read restLength bytes:", err)
 		return
 	}
 	restLength := (int(restLengthBytes[0]) << 8) + int(restLengthBytes[1])
 
 	rest := make([]byte, restLength)
-	_, error = downstream.Read(rest)
-	if error != nil {
+	_, err = downstream.Read(rest)
+	if err != nil {
 		downstream.Close()
-		appLog.Println("TLS header parsing problem - couldn't read rest of bytes:", error)
+		appLog.Println("TLS header parsing problem - couldn't read rest of bytes:", err)
 		return
 	}
 
@@ -234,9 +234,9 @@ func handleHTTPSConnection(downstream net.Conn) {
 	appLog.Println(downstream.RemoteAddr().String(), hostname)
 
 	// proxy the clients request to the upstream
-	upstream, error := net.Dial("tcp", "www."+hostname+":443")
-	if error != nil {
-		appLog.Println("Couldn't connect to backend:", error)
+	upstream, err := net.Dial("tcp", "www."+hostname+":443")
+	if err != nil {
+		appLog.Println("Couldn't connect to backend:", err)
 		downstream.Close()
 		return
 	}
