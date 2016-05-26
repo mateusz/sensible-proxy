@@ -9,6 +9,7 @@ package main
 import (
 	"bufio"
 	"container/list"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -21,7 +22,10 @@ import (
 var appLog *log.Logger
 
 func main() {
+	// don't show any date/times to the console output, as these are shown in the syslog
+	// when this program runs as a systemd service
 	log.SetFlags(0)
+
 	// default configuration
 	var (
 		httpPort   string = "80"
@@ -44,7 +48,7 @@ func main() {
 	if err != nil {
 		log.Fatalln("Failed to open log file", err)
 	}
-	appLog = log.New(io.Writer(logFile), "", log.Ldate|log.Ltime)
+	appLog = log.New(io.Writer(logFile), "", 0)
 
 	errChan := make(chan int)
 	go doProxy(errChan, httpPort, handleHTTPConnection)
@@ -69,10 +73,20 @@ func main() {
 	}
 }
 
+func logError(data *LogData) {
+	data.messageType = "ERROR"
+	appLog.Printf("%s\n", data)
+}
+
+func logAccess(data *LogData) {
+	data.messageType = "ACCESS"
+	appLog.Printf("%s\n", data)
+}
+
 func copyAndClose(dst io.WriteCloser, src io.Reader) {
 	_, err := io.Copy(dst, src)
 	if err != nil {
-		appLog.Println("Error during copy between connections: :", err)
+		logError(&LogData{message: fmt.Sprintf("Error during copy between connections: %s", err)})
 	}
 	close(dst)
 }
@@ -82,10 +96,14 @@ func handleHTTPConnection(downstream net.Conn) {
 	hostname := ""
 	readLines := list.New()
 	for hostname == "" {
-		bytes, _, error := reader.ReadLine()
-		if error != nil {
+		bytes, _, err := reader.ReadLine()
+		if err != nil {
 			close(downstream)
-			appLog.Println("Error reading from connection:", error)
+			logError(&LogData{
+				message:  fmt.Sprintf("Error during copy between connections: %s", err),
+				conn:     downstream,
+				hostname: hostname,
+			})
 			return
 		}
 		line := string(bytes)
@@ -100,14 +118,15 @@ func handleHTTPConnection(downstream net.Conn) {
 		}
 	}
 
-	// log the access
-	appLog.Println(downstream.RemoteAddr().String(), hostname)
-
 	// will timeout with the default linux TCP timeout
 	upstream, err := net.Dial("tcp", "www."+hostname+":80")
 	if err != nil {
+		logError(&LogData{
+			message:  fmt.Sprintf("Couldn't connect to backend:", err),
+			conn:     downstream,
+			hostname: hostname,
+		})
 		close(downstream)
-		appLog.Println("Couldn't connect to backend:", err)
 		return
 	}
 
@@ -116,13 +135,24 @@ func handleHTTPConnection(downstream net.Conn) {
 		line := element.Value.(string)
 		_, err := upstream.Write([]byte(line))
 		if err != nil {
-			appLog.Println("Error while proxying initial request to backend: %s", err)
+			logError(&LogData{
+				message:  fmt.Sprintf("Error while proxying initial request to backend: %s", err),
+				conn:     downstream,
+				hostname: hostname,
+			})
 		}
 		_, err = upstream.Write([]byte("\n"))
 		if err != nil {
-			appLog.Println("Error while proxying initial request to backend: %s", err)
+			logError(&LogData{
+				message:  fmt.Sprintf("Error while proxying initial request to backend: %s", err),
+				conn:     downstream,
+				hostname: hostname,
+			})
 		}
 	}
+
+	// by getting here, it seems there are no problems with the connection. Log the successful access.
+	logAccess(&LogData{conn: downstream, hostname: hostname})
 
 	go copyAndClose(upstream, reader)
 	go copyAndClose(downstream, upstream)
@@ -131,7 +161,7 @@ func handleHTTPConnection(downstream net.Conn) {
 func close(c io.Closer) {
 	err := c.Close()
 	if err != nil {
-		appLog.Println("Error when closing connection: %s", err)
+		logError(&LogData{message: fmt.Sprintf("Error when closing connection: %s", err)})
 	}
 }
 
@@ -139,34 +169,37 @@ func handleHTTPSConnection(downstream net.Conn) {
 	firstByte := make([]byte, 1)
 	_, err := downstream.Read(firstByte)
 	if err != nil {
+		logError(&LogData{message: "TLS header parsing problem - couldn't read first byte.", conn: downstream})
 		close(downstream)
-		appLog.Println("TLS header parsing problem - couldn't read first byte.")
 		return
 	}
 	if firstByte[0] != 0x16 {
+		logError(&LogData{message: "TLS header parsing problem - not TLS.", conn: downstream})
 		close(downstream)
-		appLog.Println("TLS header parsing problem - not TLS.")
 		return
 	}
 
 	versionBytes := make([]byte, 2)
 	_, err = downstream.Read(versionBytes)
 	if err != nil {
+		logError(&LogData{message: "TLS header parsing problem - couldn't read version bytes.", conn: downstream})
 		close(downstream)
-		appLog.Println("TLS header parsing problem - couldn't read version bytes.")
 		return
 	}
 	if versionBytes[0] < 3 || (versionBytes[0] == 3 && versionBytes[1] < 1) {
+		logError(&LogData{message: "TLS header parsing problem - SSL < 3.1, SNI not supported.", conn: downstream})
 		close(downstream)
-		appLog.Println("TLS header parsing problem - SSL < 3.1, SNI not supported.")
 		return
 	}
 
 	restLengthBytes := make([]byte, 2)
 	_, err = downstream.Read(restLengthBytes)
 	if err != nil {
+		logError(&LogData{
+			message: fmt.Sprintf("TLS header parsing problem - couldn't read restLength bytes:", err),
+			conn:    downstream,
+		})
 		close(downstream)
-		appLog.Println("TLS header parsing problem - couldn't read restLength bytes:", err)
 		return
 	}
 	restLength := (int(restLengthBytes[0]) << 8) + int(restLengthBytes[1])
@@ -174,8 +207,11 @@ func handleHTTPSConnection(downstream net.Conn) {
 	rest := make([]byte, restLength)
 	n, err := downstream.Read(rest)
 	if err != nil || n == 0 {
+		logError(&LogData{
+			message: fmt.Sprintf("TLS header parsing problem - couldn't read rest of bytes:", err),
+			conn:    downstream,
+		})
 		close(downstream)
-		appLog.Println("TLS header parsing problem - couldn't read rest of bytes:", err)
 		return
 	}
 
@@ -184,8 +220,8 @@ func handleHTTPSConnection(downstream net.Conn) {
 	handshakeType := rest[0]
 	current += 1
 	if handshakeType != 0x1 {
+		logError(&LogData{message: "TLS header parsing problem - not a ClientHello.", conn: downstream})
 		close(downstream)
-		appLog.Println("TLS header parsing problem - not a ClientHello.")
 		return
 	}
 
@@ -209,8 +245,8 @@ func handleHTTPSConnection(downstream net.Conn) {
 	current += compressionMethodLength
 
 	if current > restLength {
+		logError(&LogData{message: "TLS header parsing problem - no extensions.", conn: downstream})
 		close(downstream)
-		appLog.Println("TLS header parsing problem - no extensions.")
 		return
 	}
 
@@ -234,7 +270,11 @@ func handleHTTPSConnection(downstream net.Conn) {
 			nameType := rest[current]
 			current += 1
 			if nameType != 0 {
-				appLog.Println("TLS header parsing problem - not a hostname.")
+				logError(&LogData{
+					message:  "TLS header parsing problem - not a hostname.",
+					conn:     downstream,
+					hostname: hostname,
+				})
 				return
 			}
 			nameLen := (int(rest[current]) << 8) + int(rest[current+1])
@@ -245,37 +285,57 @@ func handleHTTPSConnection(downstream net.Conn) {
 		current += extensionDataLength
 	}
 	if hostname == "" {
-		appLog.Println("TLS header parsing problem - no hostname found.")
+		logError(&LogData{message: "TLS header parsing problem - no hostname found.", conn: downstream})
 		return
 	}
-
-	// log the access
-	appLog.Println(downstream.RemoteAddr().String(), hostname)
 
 	// proxy the clients request to the upstream
 	upstream, err := net.Dial("tcp", "www."+hostname+":443")
 	if err != nil {
-		appLog.Println("Couldn't connect to backend:", err)
+		logError(&LogData{
+			message:  fmt.Sprintf("Couldn't connect to backend:", err),
+			conn:     downstream,
+			hostname: hostname,
+		})
 		close(downstream)
 		return
 	}
 
 	_, err = upstream.Write(firstByte)
 	if err != nil {
-		appLog.Println("Error while proxying first byte to backend: %s", err)
+		logError(&LogData{
+			message:  fmt.Sprintf("Error while proxying first byte to backend: %s", err),
+			conn:     downstream,
+			hostname: hostname,
+		})
 	}
 	_, err = upstream.Write(versionBytes)
 	if err != nil {
-		appLog.Println("Error while proxying versionBytes to backend: %s", err)
+		logError(&LogData{
+			message:  fmt.Sprintf("Error while proxying versionBytes to backend: %s", err),
+			conn:     downstream,
+			hostname: hostname,
+		})
 	}
 	_, err = upstream.Write(restLengthBytes)
 	if err != nil {
-		appLog.Println("Error while proxying restLengthBytes to backend: %s", err)
+		logError(&LogData{
+			message:  fmt.Sprintf("Error while proxying restLengthBytes to backend: %s", err),
+			conn:     downstream,
+			hostname: hostname,
+		})
 	}
 	_, err = upstream.Write(rest)
 	if err != nil {
-		appLog.Println("Error while proxying rest to backend: %s", err)
+		logError(&LogData{
+			message:  fmt.Sprintf("Error while proxying rest to backend: %s", err),
+			conn:     downstream,
+			hostname: hostname,
+		})
 	}
+
+	// by getting here, it seems there are no problems with the connection. Log the successful access.
+	logAccess(&LogData{conn: downstream, hostname: hostname})
 
 	go copyAndClose(upstream, downstream)
 	go copyAndClose(downstream, upstream)
