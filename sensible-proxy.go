@@ -129,7 +129,7 @@ func handleHTTPConnection(downstream net.Conn) {
 	upstream, err := net.Dial("tcp", "www."+hostname+":80")
 	if err != nil {
 		logError(&LogData{
-			message:  fmt.Sprintf("Couldn't connect to backend:", err),
+			message:  fmt.Sprintf("Couldn't connect to backend: %s", err),
 			conn:     downstream,
 			hostname: hostname,
 		})
@@ -203,7 +203,7 @@ func handleHTTPSConnection(downstream net.Conn) {
 	_, err = downstream.Read(restLengthBytes)
 	if err != nil {
 		logError(&LogData{
-			message: fmt.Sprintf("TLS header parsing problem - couldn't read restLength bytes:", err),
+			message: fmt.Sprintf("TLS header parsing problem - couldn't read restLength bytes: %s", err),
 			conn:    downstream,
 		})
 		close(downstream)
@@ -215,7 +215,7 @@ func handleHTTPSConnection(downstream net.Conn) {
 	n, err := downstream.Read(rest)
 	if err != nil || n == 0 {
 		logError(&LogData{
-			message: fmt.Sprintf("TLS header parsing problem - couldn't read rest of bytes:", err),
+			message: fmt.Sprintf("TLS header parsing problem - couldn't read rest of bytes: %s", err),
 			conn:    downstream,
 		})
 		close(downstream)
@@ -300,7 +300,7 @@ func handleHTTPSConnection(downstream net.Conn) {
 	upstream, err := net.Dial("tcp", "www."+hostname+":443")
 	if err != nil {
 		logError(&LogData{
-			message:  fmt.Sprintf("Couldn't connect to backend:", err),
+			message:  fmt.Sprintf("Couldn't connect to backend: %s", err),
 			conn:     downstream,
 			hostname: hostname,
 		})
