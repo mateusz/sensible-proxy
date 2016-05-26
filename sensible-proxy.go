@@ -21,6 +21,7 @@ import (
 var appLog *log.Logger
 
 func main() {
+	log.SetFlags(0)
 	// default configuration
 	var (
 		httpPort   string = "80"
@@ -60,8 +61,10 @@ func main() {
 	// block until error or signal
 	select {
 	case <-errChan:
+		log.Printf("Stopping server, it crashed.")
 		os.Exit(1)
 	case <-sigChan:
+		log.Printf("Stopping server")
 		os.Exit(0)
 	}
 }
@@ -287,16 +290,16 @@ func doProxy(errChan chan int, port string, handle func(net.Conn)) {
 
 	listener, err := net.Listen("tcp", "0.0.0.0:"+port)
 	if err != nil {
-		appLog.Println("Couldn't start listening:", err)
+		log.Printf("Couldn't start listening: %s", err)
 		return
 	}
 	defer close(listener)
 
-	appLog.Println("Started proxy on", port, "-- listening...")
+	log.Printf("Started proxy on %s", port)
 	for {
-		connection, error := listener.Accept()
-		if error != nil {
-			appLog.Println("Accept error:", error)
+		connection, err := listener.Accept()
+		if err != nil {
+			appLog.Println("Accept error:", err)
 			continue
 		}
 		go handle(connection)
