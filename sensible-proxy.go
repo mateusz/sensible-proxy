@@ -86,7 +86,14 @@ func logAccess(data *LogData) {
 func copyAndClose(dst io.WriteCloser, src io.Reader) {
 	_, err := io.Copy(dst, src)
 	if err != nil {
-		logError(&LogData{message: fmt.Sprintf("Error during copy between connections: %s", err)})
+		// this is a bit of hack until the core net lib gives us better
+		// typed error. The below error is expected since either the
+		// client or backend can close the connection when ever they
+		// feel like it.
+		str := err.Error()
+		if !strings.Contains(str, "use of closed network connection") {
+			logError(&LogData{message: fmt.Sprintf("Error during copy between connections: %s", err)})
+		}
 	}
 	close(dst)
 }
