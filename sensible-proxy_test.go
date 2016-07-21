@@ -36,7 +36,11 @@ func TestHTTPConnection(t *testing.T) {
 	w := &FakeWriter{}
 	appLog = log.New(w, "", log.Ldate|log.Ltime)
 
-	actual, conn, _ := requestHTTP("google.com")
+	actual, conn, err := requestHTTP("google.com")
+	if err != nil {
+		t.Errorf("%s\n", err)
+		return
+	}
 	defer conn.Close()
 
 	expected := "HTTP/1.0 302 Found"
@@ -191,7 +195,7 @@ func requestHTTPS(SNIServerName, requestServerName string) ([]byte, net.Conn, er
 }
 
 func getProxyServer(handler func(net.Conn)) (net.Listener, error) {
-	listener, err := net.Listen("tcp", ":")
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, err
 	}
