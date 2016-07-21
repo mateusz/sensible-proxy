@@ -95,7 +95,7 @@ func TestHTTPSConnectionEmptySNI(t *testing.T) {
 		t.Errorf("Expected connection to be closed with an EOF")
 	}
 
-	expected := "Couldn't connect to backend"
+	expected := "TLS header parsing problem - no hostname found"
 	if !strings.Contains(string(w.logs), expected) {
 		t.Errorf("Expected '%s' in logs, got %s", expected, string(w.logs))
 	}
