@@ -126,6 +126,21 @@ func TestHTTPSConnectionWrongSNI(t *testing.T) {
 	}
 }
 
+func TestHTTPSBadInput(t *testing.T) {
+	w := &FakeWriter{}
+	appLog = log.New(w, "", log.Ldate|log.Ltime)
+
+	var crashers = []string{
+		"\x1600\x00",
+	}
+
+	for _, crashData := range crashers {
+		b := &buffer{}
+		b.data = []byte(crashData)
+		handleHTTPSConnection(b)
+	}
+}
+
 func requestHTTP(domain string) ([]byte, net.Conn, error) {
 	done := make(chan bool)
 	defer func(doneChan chan bool) {
@@ -182,21 +197,6 @@ func getProxyServer(done chan bool, handler func(net.Conn)) (net.Listener, error
 	}(done, handler)
 
 	return listener, nil
-}
-
-func TestHTTPSBadInput(t *testing.T) {
-	w := &FakeWriter{}
-	appLog = log.New(w, "", log.Ldate|log.Ltime)
-
-	var crashers = []string{
-		"\x1600\x00",
-	}
-
-	for _, crashData := range crashers {
-		b := &buffer{}
-		b.data = []byte(crashData)
-		handleHTTPSConnection(b)
-	}
 }
 
 // buffer is just here to make it easier to inject random content into a

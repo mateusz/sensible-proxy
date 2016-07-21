@@ -165,13 +165,6 @@ func handleHTTPConnection(downstream net.Conn) {
 	go copyAndClose(downstream, upstream)
 }
 
-func close(c io.Closer) {
-	err := c.Close()
-	if err != nil {
-		logError(&LogData{message: fmt.Sprintf("Error when closing connection: %s", err)})
-	}
-}
-
 func handleHTTPSConnection(downstream net.Conn) {
 	firstByte := make([]byte, 1)
 	_, err := downstream.Read(firstByte)
@@ -347,6 +340,13 @@ func handleHTTPSConnection(downstream net.Conn) {
 
 	go copyAndClose(upstream, downstream)
 	go copyAndClose(downstream, upstream)
+}
+
+func close(c io.Closer) {
+	err := c.Close()
+	if err != nil {
+		logError(&LogData{message: fmt.Sprintf("Error when closing connection: %s", err)})
+	}
 }
 
 func reportError(errChan chan int) {
