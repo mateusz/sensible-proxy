@@ -43,7 +43,8 @@ func TestHTTPConnection(t *testing.T) {
 	}
 	defer conn.Close()
 
-	expected := "HTTP/1.0 302 Found"
+	// depending on the area you are testing from you might get a 301 or 302
+	expected := "HTTP/1.0 30"
 
 	if !strings.Contains(string(actual), expected) {
 		t.Errorf("Expected response to contain '%s' got:\n%s", expected, actual)
@@ -85,7 +86,9 @@ func TestHTTPSConnection(t *testing.T) {
 		return
 	}
 
-	expected := "HTTP/1.0 302 Found"
+	// depending on the area you are testing from you might get a 301 or 302
+	expected := "HTTP/1.0 30"
+
 	if !strings.Contains(string(actual), expected) {
 		t.Errorf("Expected response to contain '%s' got:\n%s", expected, actual)
 	}
