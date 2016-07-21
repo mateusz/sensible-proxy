@@ -9,15 +9,27 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"sync"
 )
 
 type FakeWriter struct {
+	sync.Mutex
 	logs []byte
 }
 
 func (w *FakeWriter) Write(p []byte) (n int, err error) {
+	w.Lock()
+	defer w.Unlock()
 	w.logs = append(w.logs, p...)
 	return len(p), nil
+}
+
+func (w *FakeWriter) Read() []byte {
+	w.Lock()
+	defer w.Unlock()
+	temp := make([]byte, len(w.logs))
+	copy(temp, w.logs)
+	return temp
 }
 
 func TestHTTPConnection(t *testing.T) {
@@ -33,12 +45,13 @@ func TestHTTPConnection(t *testing.T) {
 		t.Errorf("Expected response to contain '%s' got:\n%s", expected, actual)
 	}
 
+	logLines := w.Read()
 	expected = "google.com"
-	if !strings.Contains(string(w.logs), expected) {
+	if !strings.Contains(string(logLines), expected) {
 		t.Errorf("Expected log to contain '%s' got:\n%s", expected, w.logs)
 	}
 	expected = conn.LocalAddr().String()
-	if !strings.Contains(string(w.logs), expected) {
+	if !strings.Contains(string(logLines), expected) {
 		t.Errorf("Expected log to contain '%s' got:\n%s", expected, w.logs)
 	}
 }
@@ -51,9 +64,10 @@ func TestHTTPConnectToNoneExistingDNS(t *testing.T) {
 	if string(content) != "" {
 		t.Errorf("Expected read to be empty")
 	}
+	logLines := w.Read()
 	expected := "Couldn't connect to backend"
-	if !strings.Contains(string(w.logs), expected) {
-		t.Errorf("Expected '%s' in logs, got %s", expected, string(w.logs))
+	if !strings.Contains(string(logLines), expected) {
+		t.Errorf("Expected '%s' in logs, got %s", expected, string(logLines))
 	}
 }
 
@@ -66,18 +80,20 @@ func TestHTTPSConnection(t *testing.T) {
 		t.Errorf("Error on read: %s", err)
 		return
 	}
+
 	expected := "HTTP/1.0 302 Found"
 	if !strings.Contains(string(actual), expected) {
 		t.Errorf("Expected response to contain '%s' got:\n%s", expected, actual)
 	}
 
+	logLines := w.Read()
 	expected = "google.com"
-	if !strings.Contains(string(w.logs), expected) {
-		t.Errorf("Expected log to contain '%s' got:\n%s", expected, w.logs)
+	if !strings.Contains(string(logLines), expected) {
+		t.Errorf("Expected log to contain '%s' got:\n%s", expected, string(logLines))
 	}
 	expected = conn.LocalAddr().String()
-	if !strings.Contains(string(w.logs), expected) {
-		t.Errorf("Expected log to contain '%s' got:\n%s", expected, w.logs)
+	if !strings.Contains(string(logLines), expected) {
+		t.Errorf("Expected log to contain '%s' got:\n%s", expected, string(logLines))
 	}
 }
 
@@ -94,10 +110,10 @@ func TestHTTPSConnectionEmptySNI(t *testing.T) {
 	if err != io.EOF {
 		t.Errorf("Expected connection to be closed with an EOF")
 	}
-
+	logLines := w.Read()
 	expected := "TLS header parsing problem - no hostname found"
-	if !strings.Contains(string(w.logs), expected) {
-		t.Errorf("Expected '%s' in logs, got %s", expected, string(w.logs))
+	if !strings.Contains(string(logLines), expected) {
+		t.Errorf("Expected '%s' in logs, got %s", expected, string(logLines))
 	}
 }
 
@@ -116,13 +132,14 @@ func TestHTTPSConnectionWrongSNI(t *testing.T) {
 		t.Errorf("Expected response to contain '%s' got:\n%s", expected, actual)
 	}
 
+	logLines := w.Read()
 	expected = "example.com"
-	if !strings.Contains(string(w.logs), expected) {
-		t.Errorf("Expected log to contain '%s' got:\n%s", expected, w.logs)
+	if !strings.Contains(string(logLines), expected) {
+		t.Errorf("Expected log to contain '%s' got:\n%s", expected, string(logLines))
 	}
 	expected = conn.LocalAddr().String()
-	if !strings.Contains(string(w.logs), expected) {
-		t.Errorf("Expected log to contain '%s' got:\n%s", expected, w.logs)
+	if !strings.Contains(string(logLines), expected) {
+		t.Errorf("Expected log to contain '%s' got:\n%s", expected, string(logLines))
 	}
 }
 
@@ -146,7 +163,6 @@ func requestHTTP(domain string) ([]byte, net.Conn, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	defer listener.Close()
 
 	conn, err := net.Dial("tcp", listener.Addr().String())
 	if err != nil {
@@ -160,7 +176,6 @@ func requestHTTP(domain string) ([]byte, net.Conn, error) {
 
 func requestHTTPS(SNIServerName, requestServerName string) ([]byte, net.Conn, error) {
 	listener, err := getProxyServer(handleHTTPSConnection)
-	defer listener.Close()
 	if err != nil {
 		return nil, nil, err
 	}
