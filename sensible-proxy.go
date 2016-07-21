@@ -284,7 +284,7 @@ func handleHTTPSConnection(downstream net.Conn) {
 
 		current += extensionDataLength
 	}
-	if hostname == "" {
+	if hostname == "" || hostname == "127.0.0.1" {
 		logError(&LogData{message: "TLS header parsing problem - no hostname found.", conn: downstream})
 		close(downstream)
 		return
