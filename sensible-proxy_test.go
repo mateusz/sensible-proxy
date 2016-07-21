@@ -142,32 +142,25 @@ func TestHTTPSBadInput(t *testing.T) {
 }
 
 func requestHTTP(domain string) ([]byte, net.Conn, error) {
-	done := make(chan bool)
-	defer func(doneChan chan bool) {
-		doneChan <- true
-	}(done)
-
-	server, err := getProxyServer(done, handleHTTPConnection)
+	listener, err := getProxyServer(handleHTTPConnection)
 	if err != nil {
 		return nil, nil, err
 	}
-	defer server.Close()
+	defer listener.Close()
 
-	conn, err := net.Dial("tcp", server.Addr().String())
+	conn, err := net.Dial("tcp", listener.Addr().String())
 	if err != nil {
 		return nil, nil, err
 	}
 	fmt.Fprintf(conn, "GET / HTTP/1.0\r\nHost: "+domain+"\r\nContent-Length: 0\r\n\r\n")
 	content, err := ioutil.ReadAll(conn)
+
 	return content, conn, err
 }
 
 func requestHTTPS(SNIServerName, requestServerName string) ([]byte, net.Conn, error) {
-	done := make(chan bool)
-	defer func(doneChan chan bool) {
-		doneChan <- true
-	}(done)
-	listener, err := getProxyServer(done, handleHTTPSConnection)
+	listener, err := getProxyServer(handleHTTPSConnection)
+	defer listener.Close()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -182,19 +175,18 @@ func requestHTTPS(SNIServerName, requestServerName string) ([]byte, net.Conn, er
 	return content, conn, err
 }
 
-func getProxyServer(done chan bool, handler func(net.Conn)) (net.Listener, error) {
+func getProxyServer(handler func(net.Conn)) (net.Listener, error) {
 	listener, err := net.Listen("tcp", ":")
 	if err != nil {
 		return nil, err
 	}
-	go func(stop chan bool, handler func(net.Conn)) {
+	go func(handler func(net.Conn)) {
 		connection, err := listener.Accept()
 		if err != nil {
 			panic(err)
 		}
 		handler(connection)
-		<-stop
-	}(done, handler)
+	}(handler)
 
 	return listener, nil
 }
