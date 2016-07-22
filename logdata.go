@@ -6,6 +6,15 @@ import (
 	"time"
 )
 
+func NewLogData(msg, msgType, hostname string, conn net.Conn) *LogData {
+	return &LogData{
+		message:     msg,
+		messageType: msgType,
+		hostname:    hostname,
+		conn:        conn,
+	}
+}
+
 type LogData struct {
 	message     string
 	messageType string
@@ -14,9 +23,9 @@ type LogData struct {
 }
 
 func (data *LogData) String() string {
-	remoteIp := "-"
+	remoteIP := "-"
 	if data.conn != nil {
-		remoteIp = data.conn.RemoteAddr().String()
+		remoteIP = data.conn.RemoteAddr().String()
 	}
 	hostname := "-"
 	message := "-"
@@ -34,7 +43,7 @@ func (data *LogData) String() string {
 	return fmt.Sprintf(
 		"%s %s %s %s %s",
 		time.Now().Format(time.RFC3339),
-		remoteIp,
+		remoteIP,
 		hostname,
 		messageType,
 		message,
