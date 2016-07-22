@@ -7,6 +7,8 @@ import (
 	"io/ioutil"
 	"log"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -178,6 +180,58 @@ func TestHTTPSBadInput(t *testing.T) {
 		b := &buffer{}
 		b.data = []byte(crashData)
 		handleHTTPSConnection(b, proxy)
+	}
+}
+
+func TestFetchWhiteList(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, "baea954b95731c68ae6e45bd1e252eb4560cdc45\n93195596cc1951e7857b5cc80a9e9f01b3b43a7c")
+	}))
+	defer ts.Close()
+
+	whitelist := fetchWhiteList(ts.URL)
+	if len(whitelist) != 2 {
+		t.Errorf("Whitelist should have 2 entries")
+	}
+}
+
+func TestFetchWhiteListEmptyResponse(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, "")
+	}))
+	defer ts.Close()
+
+	whitelist := fetchWhiteList(ts.URL)
+	if len(whitelist) != 0 {
+		t.Errorf("Whitelist should have 0 entries")
+	}
+}
+
+func TestFetchWhiteListOnlySHA1(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, `baea954b95731c68ae6e45bd1e252eb4560cdc45
+not-40char
+93195596cc1951e7857b5cc80a9e9f01b3b43a7c
+93195596cc1951e7857b5cc80a9e9f01b3b43a7ctNotA40SHA1Either
+`)
+	}))
+	defer ts.Close()
+
+	whitelist := fetchWhiteList(ts.URL)
+	if len(whitelist) != 2 {
+		t.Errorf("Whitelist should have 2 entries")
+	}
+}
+
+func TestFetchWhiteListOnlyOneEntry(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, "baea954b95731c68ae6e45bd1e252eb4560cdc45")
+	}))
+	defer ts.Close()
+
+	whitelist := fetchWhiteList(ts.URL)
+	if len(whitelist) != 1 {
+		t.Errorf("Whitelist should have 1 entry")
 	}
 }
 

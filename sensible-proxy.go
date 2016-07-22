@@ -12,12 +12,15 @@ import (
 	"crypto/sha1"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 )
 
 type tcpHandler func(net.Conn, *ConnectionProxy) bool
@@ -50,22 +53,20 @@ func main() {
 		log.Fatalln("Failed to open log file", err)
 	}
 
-	whitelist := []string{}
 	appLog := log.New(io.Writer(logFile), "", 0)
 
 	errChan := make(chan int)
 
-	go doProxy(errChan, handleHTTPConnection, &ConnectionProxy{
-		port:      httpPort,
-		logger:    appLog,
-		whitelist: whitelist,
-	})
-
-	go doProxy(errChan, handleHTTPSConnection, &ConnectionProxy{
-		port:      httpsPort,
-		logger:    appLog,
-		whitelist: whitelist,
-	})
+	proxy := &ConnectionProxy{
+		port:   httpPort,
+		logger: appLog,
+	}
+	tlsProxy := &ConnectionProxy{
+		port:   httpsPort,
+		logger: appLog,
+	}
+	go doProxy(errChan, handleHTTPConnection, proxy)
+	go doProxy(errChan, handleHTTPSConnection, tlsProxy)
 
 	// setup capturing of signals
 	sigChan := make(chan os.Signal, 1)
@@ -74,6 +75,8 @@ func main() {
 		syscall.SIGINT,
 		syscall.SIGTERM,
 		syscall.SIGQUIT)
+
+	periodicWhiteListUpdate(proxy, tlsProxy, os.Getenv("WHITELIST_URL"))
 
 	// block until error or signal
 	select {
@@ -84,6 +87,34 @@ func main() {
 		log.Printf("Stopping server")
 		os.Exit(0)
 	}
+}
+
+func periodicWhiteListUpdate(proxy, tlsProxy *ConnectionProxy, url string) {
+	if url == "" {
+		proxy.Logln("No WHITELIST_URL set, allowing all domains")
+		return
+	}
+
+	ticker := time.NewTicker(time.Second * 60)
+
+	fetch := func() {
+		proxy.Logf("Fetching whitelist from '%s'\n", url)
+		whiteList := fetchWhiteList(url)
+		if len(whiteList) > 0 {
+			proxy.Logf("Fetched %d white listed domains\n", len(whiteList))
+		} else {
+			proxy.Logln("Could not find whitelist, allowing all domains\n")
+		}
+		proxy.SetWhiteList(whiteList)
+		tlsProxy.SetWhiteList(whiteList)
+	}
+
+	fetch()
+	go func() {
+		for range ticker.C {
+			fetch()
+		}
+	}()
 }
 
 func doProxy(errChan chan int, handle tcpHandler, proxy *ConnectionProxy) {
@@ -289,6 +320,29 @@ func handleHTTPSConnection(downstream net.Conn, proxy *ConnectionProxy) bool {
 
 	// by getting here, it seems there are no problems with the connection. Log the successful access.
 	return proxy.LogAccess(hostname, downstream)
+}
+
+func fetchWhiteList(URL string) []string {
+	resp, err := http.Get(URL)
+	// if there is an error, just allow all
+	if err != nil {
+		return []string{}
+	}
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	// if there is an error, just allow all
+	if err != nil {
+		return []string{}
+	}
+	result := []string{}
+	lines := strings.Split(string(body), "\n")
+	for i := range lines {
+		// length of a SHA1 is 40 chars
+		if len(lines[i]) == 40 {
+			result = append(result, string(lines[i]))
+		}
+	}
+	return result
 }
 
 func copyAndClose(dst io.WriteCloser, src io.Reader, proxy *ConnectionProxy) {
