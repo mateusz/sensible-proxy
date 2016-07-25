@@ -7,85 +7,95 @@ import (
 	"io/ioutil"
 	"log"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
 
-type FakeWriter struct {
-	logs []byte
-}
-
-func (w *FakeWriter) Write(p []byte) (n int, err error) {
-	w.logs = append(w.logs, p...)
-	return len(p), nil
-}
-
 func TestHTTPConnection(t *testing.T) {
-	w := &FakeWriter{}
-	appLog = log.New(w, "", log.Ldate|log.Ltime)
+	w := &BufferWriter{}
 
-	actual, conn, _ := requestHTTP("google.com")
+	proxy := getMockProxy(w, "google.com")
+	actual, conn, err := requestHTTP("google.com", proxy)
+	if err != nil {
+		t.Errorf("%s\n", err)
+		return
+	}
 	defer conn.Close()
 
-	expected := "HTTP/1.0 302 Found"
+	// depending on the area you are testing from you might get a 301 or 302
+	expected := "HTTP/1.0 30"
 
 	if !strings.Contains(string(actual), expected) {
-		t.Errorf("Expected response to contain '%s' got:\n%s", expected, actual)
+		t.Errorf("Expected response to contain '%s' got:\n%s", expected, string(actual))
 	}
 
+	logLines := w.Content()
 	expected = "google.com"
-	if !strings.Contains(string(w.logs), expected) {
-		t.Errorf("Expected log to contain '%s' got:\n%s", expected, w.logs)
+	if !strings.Contains(string(logLines), expected) {
+		t.Errorf("Expected log to contain '%s' got:\n%s", expected, string(logLines))
 	}
 	expected = conn.LocalAddr().String()
-	if !strings.Contains(string(w.logs), expected) {
-		t.Errorf("Expected log to contain '%s' got:\n%s", expected, w.logs)
+	if !strings.Contains(string(logLines), expected) {
+		t.Errorf("Expected log to contain '%s' got:\n%s", expected, string(logLines))
 	}
 }
 
 func TestHTTPConnectToNoneExistingDNS(t *testing.T) {
-	w := &FakeWriter{}
-	appLog = log.New(w, "", log.Ldate|log.Ltime)
-	content, conn, _ := requestHTTP("t.ls")
+	w := &BufferWriter{}
+	proxy := getMockProxy(w)
+	content, conn, err := requestHTTP("t.ls", proxy)
+	if err != nil {
+		t.Errorf("%s\n", err)
+		return
+	}
 	defer conn.Close()
+
 	if string(content) != "" {
 		t.Errorf("Expected read to be empty")
 	}
+	logLines := w.Content()
 	expected := "Couldn't connect to backend"
-	if !strings.Contains(string(w.logs), expected) {
-		t.Errorf("Expected '%s' in logs, got %s", expected, string(w.logs))
+	if !strings.Contains(string(logLines), expected) {
+		t.Errorf("Expected '%s' in logs, got %s", expected, string(logLines))
 	}
 }
 
 func TestHTTPSConnection(t *testing.T) {
-	w := &FakeWriter{}
-	appLog = log.New(w, "", log.Ldate|log.Ltime)
-	actual, conn, err := requestHTTPS("google.com", "google.com")
-	defer conn.Close()
+	w := &BufferWriter{}
+	proxy := getMockProxy(w, "google.com")
+	actual, conn, err := requestHTTPS("google.com", "google.com", proxy)
 	if err != nil {
-		t.Errorf("Error on read: %s", err)
+		t.Errorf("%s\n", err)
 		return
 	}
-	expected := "HTTP/1.0 302 Found"
+	defer conn.Close()
+
+	// depending on the area you are testing from you might get a 301 or 302
+	expected := "HTTP/1.0 30"
+
 	if !strings.Contains(string(actual), expected) {
 		t.Errorf("Expected response to contain '%s' got:\n%s", expected, actual)
 	}
 
+	logLines := w.Content()
 	expected = "google.com"
-	if !strings.Contains(string(w.logs), expected) {
-		t.Errorf("Expected log to contain '%s' got:\n%s", expected, w.logs)
+	if !strings.Contains(string(logLines), expected) {
+		t.Errorf("Expected log to contain '%s' got:\n%s", expected, string(logLines))
 	}
 	expected = conn.LocalAddr().String()
-	if !strings.Contains(string(w.logs), expected) {
-		t.Errorf("Expected log to contain '%s' got:\n%s", expected, w.logs)
+	if !strings.Contains(string(logLines), expected) {
+		t.Errorf("Expected log to contain '%s' got:\n%s", expected, string(logLines))
 	}
 }
 
 func TestHTTPSConnectionEmptySNI(t *testing.T) {
-	w := &FakeWriter{}
-	appLog = log.New(w, "", log.Ldate|log.Ltime)
-	_, conn, err := requestHTTPS("", "google.com")
+	w := &BufferWriter{}
+	proxy := getMockProxy(w, "google.com")
 
+	_, conn, err := requestHTTPS("", "google.com", proxy)
 	if conn != nil {
 		t.Errorf("Expected connection to be nil")
 		conn.Close()
@@ -94,65 +104,155 @@ func TestHTTPSConnectionEmptySNI(t *testing.T) {
 	if err != io.EOF {
 		t.Errorf("Expected connection to be closed with an EOF")
 	}
-
-	expected := "Couldn't connect to backend"
-	if !strings.Contains(string(w.logs), expected) {
-		t.Errorf("Expected '%s' in logs, got %s", expected, string(w.logs))
+	logLines := w.Content()
+	expected := "TLS header parsing problem - no hostname found"
+	if !strings.Contains(string(logLines), expected) {
+		t.Errorf("Expected '%s' in logs, got %s", expected, string(logLines))
 	}
 }
 
 func TestHTTPSConnectionWrongSNI(t *testing.T) {
-	w := &FakeWriter{}
-	appLog = log.New(w, "", log.Ldate|log.Ltime)
-	actual, conn, err := requestHTTPS("example.com", "google.com")
-	defer conn.Close()
+	w := &BufferWriter{}
+	proxy := getMockProxy(w, "example.com", "google.com")
+	actual, conn, err := requestHTTPS("example.com", "google.com", proxy)
 	if err != nil {
-		t.Errorf("%s", err)
+		t.Errorf("%s\n", err)
 		return
 	}
+	defer conn.Close()
 
 	expected := "HTTP/1.0 404 Not Found"
 	if !strings.Contains(string(actual), expected) {
 		t.Errorf("Expected response to contain '%s' got:\n%s", expected, actual)
 	}
 
+	logLines := w.Content()
 	expected = "example.com"
-	if !strings.Contains(string(w.logs), expected) {
-		t.Errorf("Expected log to contain '%s' got:\n%s", expected, w.logs)
+	if !strings.Contains(string(logLines), expected) {
+		t.Errorf("Expected log to contain '%s' got:\n%s", expected, string(logLines))
 	}
 	expected = conn.LocalAddr().String()
-	if !strings.Contains(string(w.logs), expected) {
-		t.Errorf("Expected log to contain '%s' got:\n%s", expected, w.logs)
+	if !strings.Contains(string(logLines), expected) {
+		t.Errorf("Expected log to contain '%s' got:\n%s", expected, string(logLines))
 	}
 }
 
-func requestHTTP(domain string) ([]byte, net.Conn, error) {
-	done := make(chan bool)
-	defer func(doneChan chan bool) {
-		doneChan <- true
-	}(done)
+func TestHTTPWhitelistBlocks(t *testing.T) {
+	w := &BufferWriter{}
+	proxy := getMockProxy(w, "somedomain.com", "someother.com")
+	_, conn, err := requestHTTP("google.com", proxy)
+	if err == nil {
+		defer conn.Close()
+	}
+	defer conn.Close()
 
-	server, err := getProxyServer(done, handleHTTPConnection)
+	logLines := w.Content()
+	expected := "google.com ERROR: Hostname is not whitelisted"
+	if !strings.Contains(string(logLines), expected) {
+		t.Errorf("Expected log to contain '%s' got:\n%s", expected, string(logLines))
+	}
+}
+
+func TestHTTPSWhitelistBlocks(t *testing.T) {
+	w := &BufferWriter{}
+	proxy := getMockProxy(w, "somedomain.com", "someother.com")
+	_, conn, err := requestHTTPS("google.com", "google.com", proxy)
+	if err == nil {
+		defer conn.Close()
+	}
+
+	logLines := w.Content()
+	expected := "google.com ERROR: Hostname is not whitelisted"
+	if !strings.Contains(string(logLines), expected) {
+		t.Errorf("Expected log to contain '%s' got:\n%s", expected, string(logLines))
+	}
+}
+
+func TestHTTPSBadInput(t *testing.T) {
+	w := &BufferWriter{}
+	proxy := getMockProxy(w)
+
+	var crashers = []string{
+		"\x1600\x00",
+	}
+
+	for _, crashData := range crashers {
+		b := &buffer{}
+		b.data = []byte(crashData)
+		handleHTTPSConnection(b, proxy)
+	}
+}
+
+func TestFetchWhiteList(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, "baea954b95731c68ae6e45bd1e252eb4560cdc45\n93195596cc1951e7857b5cc80a9e9f01b3b43a7c")
+	}))
+	defer ts.Close()
+
+	whitelist := fetchWhiteList(ts.URL)
+	if len(whitelist) != 2 {
+		t.Errorf("Whitelist should have 2 entries")
+	}
+}
+
+func TestFetchWhiteListEmptyResponse(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, "")
+	}))
+	defer ts.Close()
+
+	whitelist := fetchWhiteList(ts.URL)
+	if len(whitelist) != 0 {
+		t.Errorf("Whitelist should have 0 entries")
+	}
+}
+
+func TestFetchWhiteListOnlySHA1(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, `baea954b95731c68ae6e45bd1e252eb4560cdc45
+not-40char
+93195596cc1951e7857b5cc80a9e9f01b3b43a7c
+93195596cc1951e7857b5cc80a9e9f01b3b43a7ctNotA40SHA1Either
+`)
+	}))
+	defer ts.Close()
+
+	whitelist := fetchWhiteList(ts.URL)
+	if len(whitelist) != 2 {
+		t.Errorf("Whitelist should have 2 entries")
+	}
+}
+
+func TestFetchWhiteListOnlyOneEntry(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, "baea954b95731c68ae6e45bd1e252eb4560cdc45")
+	}))
+	defer ts.Close()
+
+	whitelist := fetchWhiteList(ts.URL)
+	if len(whitelist) != 1 {
+		t.Errorf("Whitelist should have 1 entry")
+	}
+}
+
+func requestHTTP(domain string, proxy *ConnectionProxy) ([]byte, net.Conn, error) {
+	listener, err := getProxyServer(handleHTTPConnection, proxy)
 	if err != nil {
 		return nil, nil, err
 	}
-	defer server.Close()
 
-	conn, err := net.Dial("tcp", server.Addr().String())
+	conn, err := net.Dial("tcp", listener.Addr().String())
 	if err != nil {
 		return nil, nil, err
 	}
 	fmt.Fprintf(conn, "GET / HTTP/1.0\r\nHost: "+domain+"\r\nContent-Length: 0\r\n\r\n")
 	content, err := ioutil.ReadAll(conn)
+
 	return content, conn, err
 }
 
-func requestHTTPS(SNIServerName, requestServerName string) ([]byte, net.Conn, error) {
-	done := make(chan bool)
-	defer func(doneChan chan bool) {
-		doneChan <- true
-	}(done)
-	listener, err := getProxyServer(done, handleHTTPSConnection)
+func requestHTTPS(SNIServerName, requestServerName string, proxy *ConnectionProxy) ([]byte, net.Conn, error) {
+	listener, err := getProxyServer(handleHTTPSConnection, proxy)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -167,35 +267,29 @@ func requestHTTPS(SNIServerName, requestServerName string) ([]byte, net.Conn, er
 	return content, conn, err
 }
 
-func getProxyServer(done chan bool, handler func(net.Conn)) (net.Listener, error) {
-	listener, err := net.Listen("tcp", ":")
+func getProxyServer(handler tcpHandler, proxy *ConnectionProxy) (net.Listener, error) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return nil, err
+		return listener, err
 	}
-	go func(stop chan bool, handler func(net.Conn)) {
+	go func(handler tcpHandler, proxy *ConnectionProxy) {
 		connection, err := listener.Accept()
 		if err != nil {
 			panic(err)
 		}
-		handler(connection)
-		<-stop
-	}(done, handler)
-
+		handler(connection, proxy)
+	}(handler, proxy)
 	return listener, nil
 }
 
-func TestHTTPSBadInput(t *testing.T) {
-	w := &FakeWriter{}
-	appLog = log.New(w, "", log.Ldate|log.Ltime)
-
-	var crashers = []string{
-		"\x1600\x00",
+func getMockProxy(mockLogger io.Writer, whiteListedDomains ...string) *ConnectionProxy {
+	var whiteList []string
+	for _, domain := range whiteListedDomains {
+		whiteList = append(whiteList, SHA1(domain))
 	}
-
-	for _, crashData := range crashers {
-		b := &buffer{}
-		b.data = []byte(crashData)
-		handleHTTPSConnection(b)
+	return &ConnectionProxy{
+		logger:    log.New(mockLogger, "", log.Ldate|log.Ltime),
+		whitelist: whiteList,
 	}
 }
 
@@ -213,4 +307,25 @@ func (b *buffer) Read(p []byte) (n int, err error) {
 
 func (b *buffer) Close() error {
 	return nil
+}
+
+type BufferWriter struct {
+	sync.Mutex
+	logs []byte
+	asd  io.ReadWriteCloser
+}
+
+func (w *BufferWriter) Write(p []byte) (n int, err error) {
+	w.Lock()
+	defer w.Unlock()
+	w.logs = append(w.logs, p...)
+	return len(p), nil
+}
+
+func (w *BufferWriter) Content() []byte {
+	w.Lock()
+	defer w.Unlock()
+	temp := make([]byte, len(w.logs))
+	copy(temp, w.logs)
+	return temp
 }
