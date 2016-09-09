@@ -54,6 +54,10 @@ be decoded as a SHA1, it will be ignored.
 
 If there are any problem with fetching the list it will disable the whitelist.
 
+`DEBUG` default: false
+
+Set `DEBUG=true` to write all errors to the `LOG_PATH`
+
 ## Thanks
 
 Sensible Proxy is derived from https://github.com/gpjt/stupid-proxy which showed

@@ -23,6 +23,10 @@ import (
 	"time"
 )
 
+var (
+	debugLog = false
+)
+
 type tcpHandler func(net.Conn, *ConnectionProxy) bool
 
 func main() {
@@ -46,6 +50,9 @@ func main() {
 	}
 	if os.Getenv("LOG_PATH") != "" {
 		appLogPath = os.Getenv("LOG_PATH")
+	}
+	if os.Getenv("DEBUG") != "" {
+		debugLog = true
 	}
 
 	logFile, err := os.OpenFile(appLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
@@ -163,13 +170,13 @@ func handleHTTPConnection(downstream net.Conn, proxy *ConnectionProxy) bool {
 	}
 
 	if !proxy.IsWhiteListed(hostname) {
-		return proxy.LogError(fmt.Sprintf("Hostname is not whitelisted"), hostname, downstream)
+		return proxy.LogDebug(fmt.Sprintf("Hostname is not whitelisted"), hostname, downstream)
 	}
 
 	// will timeout with the default linux TCP timeout
 	upstream, err := net.Dial("tcp", "www."+hostname+":80")
 	if err != nil {
-		return proxy.LogError(fmt.Sprintf("Couldn't connect to backend: %s", err), hostname, downstream)
+		return proxy.LogDebug(fmt.Sprintf("Couldn't connect to backend: %s", err), hostname, downstream)
 	}
 
 	// proxy the clients request to the upstream
@@ -177,11 +184,11 @@ func handleHTTPConnection(downstream net.Conn, proxy *ConnectionProxy) bool {
 		line := element.Value.(string)
 
 		if _, err := upstream.Write([]byte(line)); err != nil {
-			return proxy.LogError(fmt.Sprintf("Error while proxying initial request to backend: %s", err), hostname, downstream)
+			return proxy.LogDebug(fmt.Sprintf("Error while proxying initial request to backend: %s", err), hostname, downstream)
 		}
 
 		if _, err = upstream.Write([]byte("\n")); err != nil {
-			return proxy.LogError(fmt.Sprintf("Error while proxying initial request to backend: %s", err), hostname, downstream)
+			return proxy.LogDebug(fmt.Sprintf("Error while proxying initial request to backend: %s", err), hostname, downstream)
 		}
 	}
 
@@ -286,11 +293,11 @@ func handleHTTPSConnection(downstream net.Conn, proxy *ConnectionProxy) bool {
 	}
 
 	if hostname == "" || hostname == "127.0.0.1" {
-		return proxy.LogError("TLS header parsing problem - no hostname found.", hostname, downstream)
+		return proxy.LogDebug("TLS header parsing problem - no hostname found.", hostname, downstream)
 	}
 
 	if !proxy.IsWhiteListed(hostname) {
-		return proxy.LogError("Hostname is not whitelisted", hostname, downstream)
+		return proxy.LogDebug("Hostname is not whitelisted", hostname, downstream)
 	}
 
 	// proxy the clients request to the upstream
@@ -354,7 +361,7 @@ func copyAndClose(dst io.WriteCloser, src io.Reader, proxy *ConnectionProxy) {
 		// feel like it.
 		str := err.Error()
 		if !strings.Contains(str, "use of closed network connection") {
-			proxy.LogError(fmt.Sprintf("Error during copy between connections: %s", err), "", nil)
+			proxy.LogDebug(fmt.Sprintf("Error during copy between connections: %s", err), "", nil)
 		}
 	}
 	proxy.Close(dst)

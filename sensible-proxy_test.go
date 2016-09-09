@@ -14,6 +14,10 @@ import (
 	"testing"
 )
 
+func init() {
+	debugLog = true
+}
+
 func TestHTTPConnection(t *testing.T) {
 	w := &BufferWriter{}
 
@@ -147,7 +151,7 @@ func TestHTTPWhitelistBlocks(t *testing.T) {
 	defer conn.Close()
 
 	logLines := w.Content()
-	expected := "google.com ERROR: Hostname is not whitelisted"
+	expected := "google.com DEBUG: Hostname is not whitelisted"
 	if !strings.Contains(string(logLines), expected) {
 		t.Errorf("Expected log to contain '%s' got:\n%s", expected, string(logLines))
 	}
@@ -162,7 +166,7 @@ func TestHTTPSWhitelistBlocks(t *testing.T) {
 	}
 
 	logLines := w.Content()
-	expected := "google.com ERROR: Hostname is not whitelisted"
+	expected := "google.com DEBUG: Hostname is not whitelisted"
 	if !strings.Contains(string(logLines), expected) {
 		t.Errorf("Expected log to contain '%s' got:\n%s", expected, string(logLines))
 	}
