@@ -65,7 +65,7 @@ func (p *ConnectionProxy) IsWhiteListed(hostname string) bool {
 	}
 	hash := SHA1(hostname)
 	for i := range p.whitelist {
-		if string(hash) == p.whitelist[i] {
+		if hash == p.whitelist[i] {
 			return true
 		}
 	}

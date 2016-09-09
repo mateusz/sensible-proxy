@@ -227,7 +227,7 @@ func handleHTTPSConnection(downstream net.Conn, proxy *ConnectionProxy) bool {
 	current := 0
 
 	handshakeType := rest[0]
-	current += 1
+	current++
 	if handshakeType != 0x1 {
 		return proxy.LogError("TLS header parsing problem - not a ClientHello.", "", downstream)
 	}
@@ -240,7 +240,7 @@ func handleHTTPSConnection(downstream net.Conn, proxy *ConnectionProxy) bool {
 	current += 4 + 28
 	// Skip over session ID
 	sessionIDLength := int(rest[current])
-	current += 1
+	current++
 	current += sessionIDLength
 
 	cipherSuiteLength := (int(rest[current]) << 8) + int(rest[current+1])
@@ -248,7 +248,7 @@ func handleHTTPSConnection(downstream net.Conn, proxy *ConnectionProxy) bool {
 	current += cipherSuiteLength
 
 	compressionMethodLength := int(rest[current])
-	current += 1
+	current++
 	current += compressionMethodLength
 
 	if current > restLength {
@@ -273,7 +273,7 @@ func handleHTTPSConnection(downstream net.Conn, proxy *ConnectionProxy) bool {
 			current += 2
 
 			nameType := rest[current]
-			current += 1
+			current++
 			if nameType != 0 {
 				return proxy.LogError("TLS header parsing problem - not a hostname.", hostname, downstream)
 			}
@@ -339,7 +339,7 @@ func fetchWhiteList(URL string) []string {
 	for i := range lines {
 		// length of a SHA1 is 40 chars
 		if len(lines[i]) == 40 {
-			result = append(result, string(lines[i]))
+			result = append(result, lines[i])
 		}
 	}
 	return result
@@ -360,8 +360,10 @@ func copyAndClose(dst io.WriteCloser, src io.Reader, proxy *ConnectionProxy) {
 	proxy.Close(dst)
 }
 
+// SHA1 returns a string representation of the calculated SHA1 of the input
 func SHA1(s string) string {
 	h := sha1.New()
+	// we are ignore errors here
 	h.Write([]byte(s))
 	return fmt.Sprintf("%x\n", h.Sum(nil))
 }
