@@ -372,5 +372,5 @@ func SHA1(s string) string {
 	h := sha1.New()
 	// we are ignore errors here
 	h.Write([]byte(s))
-	return fmt.Sprintf("%x\n", h.Sum(nil))
+	return fmt.Sprintf("%x", h.Sum(nil))
 }
