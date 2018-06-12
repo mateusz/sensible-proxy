@@ -50,7 +50,7 @@ func TestHTTPConnection(t *testing.T) {
 func TestHTTPConnectToNoneExistingDNS(t *testing.T) {
 	w := &BufferWriter{}
 	proxy := getMockProxy(w)
-	content, conn, err := requestHTTP("t.ls", proxy)
+	content, conn, err := requestHTTP("example.invalid", proxy)
 	if err != nil {
 		t.Errorf("%s\n", err)
 		return
@@ -58,7 +58,7 @@ func TestHTTPConnectToNoneExistingDNS(t *testing.T) {
 	defer conn.Close()
 
 	if string(content) != "" {
-		t.Errorf("Expected read to be empty")
+		t.Errorf("Expected read to be empty, got '%s'", string(content))
 	}
 	logLines := w.Content()
 	expected := "Couldn't connect to backend"
@@ -213,7 +213,7 @@ func TestFetchWhiteListEmptyResponse(t *testing.T) {
 
 func TestFetchWhiteListOnlySHA1(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintln(w, `baea954b95731c68ae6e45bd1e252eb4560cdc45
+		fmt.Fprint(w, `baea954b95731c68ae6e45bd1e252eb4560cdc45
 not-40char
 93195596cc1951e7857b5cc80a9e9f01b3b43a7c
 93195596cc1951e7857b5cc80a9e9f01b3b43a7ctNotA40SHA1Either
