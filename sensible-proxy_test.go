@@ -50,7 +50,7 @@ func TestHTTPConnection(t *testing.T) {
 func TestHTTPConnectToNoneExistingDNS(t *testing.T) {
 	w := &BufferWriter{}
 	proxy := getMockProxy(w)
-	content, conn, err := requestHTTP("t.ls", proxy)
+	content, conn, err := requestHTTP("example.invalid", proxy)
 	if err != nil {
 		t.Errorf("%s\n", err)
 		return
@@ -58,7 +58,7 @@ func TestHTTPConnectToNoneExistingDNS(t *testing.T) {
 	defer conn.Close()
 
 	if string(content) != "" {
-		t.Errorf("Expected read to be empty")
+		t.Errorf("Expected read to be empty, got '%s'", string(content))
 	}
 	logLines := w.Content()
 	expected := "Couldn't connect to backend"
