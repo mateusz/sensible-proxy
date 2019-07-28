@@ -110,7 +110,7 @@ func periodicWhiteListUpdate(proxy, tlsProxy *ConnectionProxy, url string) {
 		if len(whiteList) > 0 {
 			proxy.Logf("Fetched %d white listed domains\n", len(whiteList))
 		} else {
-			proxy.Logln("Could not find whitelist, allowing all domains\n")
+			proxy.Logln("Could not find whitelist, allowing all domains")
 		}
 		proxy.SetWhiteList(whiteList)
 		tlsProxy.SetWhiteList(whiteList)
