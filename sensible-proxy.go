@@ -104,24 +104,27 @@ func periodicWhiteListUpdate(proxy, tlsProxy *ConnectionProxy, url string) {
 
 	ticker := time.NewTicker(time.Second * 60)
 
-	fetch := func() {
-		proxy.Logf("Fetching whitelist from '%s'\n", url)
-		whiteList := fetchWhiteList(url)
-		if len(whiteList) > 0 {
-			proxy.Logf("Fetched %d white listed domains\n", len(whiteList))
-		} else {
-			proxy.Logln("Could not find whitelist, allowing all domains")
-		}
-		proxy.SetWhiteList(whiteList)
-		tlsProxy.SetWhiteList(whiteList)
-	}
-
-	fetch()
+	setWhitelistFromURL(proxy, tlsProxy, url)
 	go func() {
 		for range ticker.C {
-			fetch()
+			setWhitelistFromURL(proxy, tlsProxy, url)
 		}
 	}()
+}
+
+func setWhitelistFromURL(proxy, tlsProxy *ConnectionProxy, url string) {
+	proxy.Logf("Fetching whitelist from '%s'\n", url)
+	whiteList := fetchWhiteList(url)
+	if len(whiteList) > 0 {
+		proxy.Logf("Fetched %d white listed domains\n", len(whiteList))
+	} else if len(proxy.GetWhiteList()) > 0 {
+		proxy.Logf("Could not find whitelist, keeping old list with %d domains", len(proxy.GetWhiteList()))
+		return
+	} else {
+		proxy.Logln("Could not find whitelist, allowing all domains")
+	}
+	proxy.SetWhiteList(whiteList)
+	tlsProxy.SetWhiteList(whiteList)
 }
 
 func doProxy(errChan chan int, handle tcpHandler, proxy *ConnectionProxy) {

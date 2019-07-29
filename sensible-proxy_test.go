@@ -239,6 +239,64 @@ func TestFetchWhiteListOnlyOneEntry(t *testing.T) {
 	}
 }
 
+func TestSetWhitelistFromURL(t *testing.T) {
+
+	testDomains := []string{"google.com", "google.nz", "google.pl"}
+	response := ""
+	for _, domain := range testDomains {
+		response += SHA1(domain) + "\n"
+	}
+
+	okTestServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, response)
+	}))
+	defer okTestServer.Close()
+	emptyTestServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, "")
+	}))
+	defer emptyTestServer.Close()
+
+	logger := &BufferWriter{}
+
+	proxy, tlsProxy := getMockProxy(logger), getMockProxy(logger)
+
+	// empty previous list in proxies and fetching new list is failing
+	setWhitelistFromURL(proxy, tlsProxy, emptyTestServer.URL)
+	if len(proxy.GetWhiteList()) != 0 {
+		t.Errorf("expected proxy to have 0 domains in whitelist if first run failed, got %d", len(proxy.GetWhiteList()))
+	}
+	if len(tlsProxy.GetWhiteList()) != 0 {
+		t.Errorf("excpected tlsProxy tohave 0 domains if first run failed, got %d", len(tlsProxy.GetWhiteList()))
+	}
+	if !strings.Contains(string(logger.Content()), "Could not find whitelist, allowing all domains") {
+		t.Errorf("expected the log to indicate open whitelist due to empty list")
+	}
+
+	// empty previous list in proxies and fetching new list is returning testDomains
+	setWhitelistFromURL(proxy, tlsProxy, okTestServer.URL)
+	if len(proxy.GetWhiteList()) != len(testDomains) {
+		t.Errorf("expected proxy to have % domains in whitelist, got %d", len(testDomains), len(proxy.GetWhiteList()))
+	}
+	if len(tlsProxy.GetWhiteList()) != len(testDomains) {
+		t.Errorf("excpected tlsProxy to have % domains in whitelist, got %d", len(testDomains), len(tlsProxy.GetWhiteList()))
+	}
+	if !strings.Contains(string(logger.Content()), "Fetched 3 white listed domains") {
+		t.Errorf("expected the log to indicate successful domain update")
+	}
+
+	// has testDomains since previous, but new fetch is failing
+	setWhitelistFromURL(proxy, tlsProxy, emptyTestServer.URL)
+	if len(proxy.GetWhiteList()) != len(testDomains) {
+		t.Errorf("expected proxy to retain % domains in whitelist, got %d", len(testDomains), len(proxy.GetWhiteList()))
+	}
+	if len(tlsProxy.GetWhiteList()) != len(testDomains) {
+		t.Errorf("excpected tlsProxy still  to have % domains in whitelist, got %d", len(testDomains), len(tlsProxy.GetWhiteList()))
+	}
+	if !strings.Contains(string(logger.Content()), "Could not find whitelist, keeping old list with 3 domains") {
+		t.Errorf("expected the log to indicate empty domain list, but keeping state")
+	}
+}
+
 func requestHTTP(domain string, proxy *ConnectionProxy) ([]byte, net.Conn, error) {
 	listener, err := getProxyServer(handleHTTPConnection, proxy)
 	if err != nil {
